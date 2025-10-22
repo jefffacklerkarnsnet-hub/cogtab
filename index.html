@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ECRS Cognition Tableau Connector</title>
+    <meta charset="utf-8">
+    <meta http-equiv="Cache-Control" content="no-store" />
+    
+    <!-- Tableau WDC Library -->
+    <script src="https://connectors.tableau.com/libs/tableauwdc-2.3.latest.js" type="text/javascript"></script>
+    
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-top: 15px;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+        button {
+            margin-top: 20px;
+            padding: 12px 30px;
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #0052a3;
+        }
+        .help-text {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+        .error {
+            color: #d9534f;
+            margin-top: 10px;
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>ECRS Cognition Connector</h1>
+        
+        <label for="apiKey">API Key *</label>
+        <input type="password" id="apiKey" placeholder="Enter your ECRS API Key" />
+        <div class="help-text">Provided by ECRS</div>
+        
+        <label for="accountId">Account ID *</label>
+        <input type="text" id="accountId" placeholder="e.g., 24723" />
+        <div class="help-text">Your HQ DCLAccountId (same as subdomain in Web Office URL)</div>
+        
+        <label for="startDate">Start Date *</label>
+        <input type="date" id="startDate" />
+        
+        <label for="endDate">End Date *</label>
+        <input type="date" id="endDate" />
+        
+        <label for="dataEndpoint">Data Type</label>
+        <select id="dataEndpoint">
+            <option value="transactionjournal">Transaction Journal</option>
+            <option value="similar">Similar Items (Recommendations)</option>
+            <option value="related">Related Items (Recommendations)</option>
+        </select>
+        
+        <div class="error" id="errorMsg"></div>
+        
+        <button id="submitButton">Connect to Cognition</button>
+    </div>
+
+    <script type="text/javascript">
+        (function() {
+            var myConnector = tableau.makeConnector();
+            
+            // Define the schema
+            myConnector.getSchema = function(schemaCallback) {
+                var connectionData = JSON.parse(tableau.connectionData);
+                var endpoint = connectionData.endpoint;
+                
+                var cols = [];
+                var tableId = "";
+                var tableAlias = "";
+                
+                if (endpoint === "transactionjournal") {
+                    tableId = "transactionJournal";
+                    tableAlias = "Transaction Journal Data";
+                    cols = [
+                        { id: "TRN_DateTime", alias: "Transaction DateTime", dataType: tableau.dataTypeEnum.datetime },
+                        { id: "TRN_Number", alias: "Transaction Number", dataType: tableau.dataTypeEnum.string },
+                        { id: "TRN_Total", alias: "Total Amount", dataType: tableau.dataTypeEnum.float },
+                        { id: "TRN_NetSales", alias: "Net Sales", dataType: tableau.dataTypeEnum.float },
+                        { id: "TRN_ItemQuantity", alias: "Item Quantity", dataType: tableau.dataTypeEnum.float },
+                        { id: "StoreNumber", alias: "Store Number", dataType: tableau.dataTypeEnum.string },
+                        { id: "ItemID", alias: "Item ID", dataType: tableau.dataTypeEnum.string },
+                        { id: "ItemDescription", alias: "Item Description", dataType: tableau.dataTypeEnum.string },
+                        { id: "ItemDepartment", alias: "Department", dataType: tableau.dataTypeEnum.string },
+                        { id: "CashierName", alias: "Cashier Name", dataType: tableau.dataTypeEnum.string }
+                    ];
+                } else if (endpoint === "similar" || endpoint === "related") {
+                    tableId = "recommendations";
+                    tableAlias = endpoint === "similar" ? "Similar Items" : "Related Items";
+                    cols = [
+                        { id: "item_id", alias: "Item ID", dataType: tableau.dataTypeEnum.string },
+                        { id: "rank", alias: "Rank", dataType: tableau.dataTypeEnum.int }
+                    ];
+                }
+                
+                var tableSchema = {
+                    id: tableId,
+                    alias: tableAlias,
+                    columns: cols
+                };
+                
+                schemaCallback([tableSchema]);
+            };
+            
+            // Download the data
+            myConnector.getData = function(table, doneCallback) {
+                var connectionData = JSON.parse(tableau.connectionData);
+                var apiKey = connectionData.apiKey;
+                var accountId = connectionData.accountId;
+                var endpoint = connectionData.endpoint;
+                var startDate = connectionData.startDate;
+                var endDate = connectionData.endDate;
+                
+                var apiUrl = "https://cognition.ecrs.com/api/v1/";
+                
+                if (endpoint === "transactionjournal") {
+                    apiUrl += "datawarehouse/transactionjournal?startdate=" + startDate + "&enddate=" + endDate;
+                } else if (endpoint === "similar") {
+                    apiUrl += "predictive/recsys/similar";
+                } else if (endpoint === "related") {
+                    apiUrl += "predictive/recsys/related";
+                }
+                
+                var xhr = new XMLHttpRequest();
+                xhr.open("GET", apiUrl);
+                xhr.setRequestHeader("X-ECRS-APIKEY", apiKey);
+                xhr.setRequestHeader("X-ECRS-Auth-Acct", accountId);
+                xhr.setRequestHeader("Accept", "application/json");
+                xhr.setRequestHeader("Accept-Encoding", "gzip");
+                
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        try {
+                            var response = JSON.parse(xhr.responseText);
+                            var tableData = [];
+                            
+                            if (endpoint === "transactionjournal" && response.transactions) {
+                                tableData = response.transactions;
+                            } else if ((endpoint === "similar" || endpoint === "related") && response.items) {
+                                response.items.forEach(function(item, index) {
+                                    tableData.push({
+                                        item_id: item.id || item.pk,
+                                        rank: index + 1
+                                    });
+                                });
+                            }
+                            
+                            table.appendRows(tableData);
+                            doneCallback();
+                        } catch (e) {
+                            tableau.abortWithError("Error parsing response: " + e.message);
+                        }
+                    } else if (xhr.status === 401) {
+                        tableau.abortWithError("Authentication failed. Please check your API Key and Account ID.");
+                    } else if (xhr.status === 429) {
+                        tableau.abortWithError("Too many requests. Please try again later.");
+                    } else {
+                        tableau.abortWithError("Error: " + xhr.status + " - " + xhr.statusText);
+                    }
+                };
+                
+                xhr.onerror = function() {
+                    tableau.abortWithError("Network error occurred. Please check your internet connection.");
+                };
+                
+                xhr.send();
+            };
+            
+            tableau.registerConnector(myConnector);
+            
+            // UI handlers
+            document.getElementById('submitButton').addEventListener('click', function() {
+                var apiKey = document.getElementById('apiKey').value.trim();
+                var accountId = document.getElementById('accountId').value.trim();
+                var startDate = document.getElementById('startDate').value;
+                var endDate = document.getElementById('endDate').value;
+                var endpoint = document.getElementById('dataEndpoint').value;
+                var errorMsg = document.getElementById('errorMsg');
+                
+                // Validation
+                if (!apiKey) {
+                    errorMsg.textContent = "Please enter your API Key";
+                    errorMsg.style.display = "block";
+                    return;
+                }
+                
+                if (!accountId) {
+                    errorMsg.textContent = "Please enter your Account ID";
+                    errorMsg.style.display = "block";
+                    return;
+                }
+                
+                if (endpoint === "transactionjournal" && (!startDate || !endDate)) {
+                    errorMsg.textContent = "Please select both start and end dates for Transaction Journal";
+                    errorMsg.style.display = "block";
+                    return;
+                }
+                
+                errorMsg.style.display = "none";
+                
+                // Store connection data
+                var connectionData = {
+                    apiKey: apiKey,
+                    accountId: accountId,
+                    endpoint: endpoint,
+                    startDate: startDate,
+                    endDate: endDate
+                };
+                
+                tableau.connectionData = JSON.stringify(connectionData);
+                tableau.connectionName = "ECRS Cognition - " + endpoint;
+                tableau.submit();
+            });
+            
+            // Set default dates (last 7 days)
+            var today = new Date();
+            var lastWeek = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+            
+            document.getElementById('endDate').valueAsDate = today;
+            document.getElementById('startDate').valueAsDate = lastWeek;
+        })();
+    </script>
+</body>
+</html>
